@@ -175,3 +175,5 @@ Add screenshots here after running the Streamlit app:
 - Add SHAP-based model explainability
 - Add threshold tuning based on business cost
 - Add exportable business reports
+
+-By @tharva Gadge.
