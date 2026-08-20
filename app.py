@@ -658,6 +658,48 @@ def load_metrics(_metrics_version: float | None) -> dict[str, object] | None:
     return json.loads(METRICS_PATH.read_text(encoding="utf-8"))
 
 
+@st.cache_resource
+def retrain_model_artifact() -> dict[str, object] | None:
+    """Rebuild the model when a deployed pickle is incompatible with the runtime."""
+    try:
+        from train_model import train_and_select_best_model  # noqa: WPS433
+
+        pipeline, metrics = train_and_select_best_model()
+        return {
+            "pipeline": pipeline,
+            "feature_columns": list(pipeline.feature_names_in_),
+            "best_model_name": metrics.get("best_model_name", "Retrained model"),
+            "feature_importance": metrics.get("feature_importance", []),
+        }
+    except Exception as error:
+        st.error(f"Could not rebuild the model automatically: {error}")
+        return None
+
+
+def score_customer_probability(artifact: dict[str, object], customer: pd.DataFrame) -> float | None:
+    """Score a customer and recover from stale scikit-learn pickle artifacts."""
+    pipeline = artifact["pipeline"]
+    feature_columns = artifact.get("feature_columns")
+    if feature_columns:
+        customer = customer.reindex(columns=feature_columns)
+
+    try:
+        return float(pipeline.predict_proba(customer)[0, 1])
+    except (AttributeError, TypeError, ValueError) as error:
+        st.warning(
+            "The saved model was built with a different runtime, so the app is rebuilding it once from the dataset."
+        )
+        st.caption(f"Recovered from model scoring error: {error}")
+        rebuilt_artifact = retrain_model_artifact()
+        if not rebuilt_artifact:
+            return None
+        rebuilt_pipeline = rebuilt_artifact["pipeline"]
+        rebuilt_columns = rebuilt_artifact.get("feature_columns")
+        if rebuilt_columns:
+            customer = customer.reindex(columns=rebuilt_columns)
+        return float(rebuilt_pipeline.predict_proba(customer)[0, 1])
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Utility / rendering helpers
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1647,8 +1689,9 @@ def prediction_page(artifact: dict[str, object] | None, df: pd.DataFrame | None 
         return
 
     customer = build_customer_input()
-    pipeline = artifact["pipeline"]
-    probability = float(pipeline.predict_proba(customer)[0, 1])
+    probability = score_customer_probability(artifact, customer)
+    if probability is None:
+        return
     prediction = int(probability >= 0.5)
 
     if probability < 0.35:
