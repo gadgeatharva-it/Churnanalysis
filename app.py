@@ -20,13 +20,18 @@ sys.path.append(str(SRC_PATH))
 
 from data_preprocessing import (  # noqa: E402
     DATA_PATH,
+    build_preprocessor,
     calculate_kpis,
     churn_rate_by,
     clean_dataset,
     dataset_quality_report,
+    get_feature_columns,
     generate_business_recommendations,
     load_dataset,
+    split_features_target,
 )
+from sklearn.linear_model import LogisticRegression  # noqa: E402
+from sklearn.pipeline import Pipeline  # noqa: E402
 
 
 MODEL_PATH = PROJECT_ROOT / "models" / "churn_model.pkl"
@@ -667,16 +672,22 @@ def load_metrics(_metrics_version: float | None) -> dict[str, object] | None:
 
 @st.cache_resource
 def retrain_model_artifact() -> dict[str, object] | None:
-    """Rebuild the model when a deployed pickle is incompatible with the runtime."""
+    """Build a lightweight fallback model if the saved pickle cannot be used."""
     try:
-        from train_model import train_and_select_best_model  # noqa: WPS433
-
-        pipeline, metrics = train_and_select_best_model()
+        df = clean_dataset(load_dataset(DATA_PATH))
+        X, y = split_features_target(df)
+        pipeline = Pipeline(
+            steps=[
+                ("preprocessor", build_preprocessor(df)),
+                ("classifier", LogisticRegression(max_iter=1000, class_weight="balanced")),
+            ]
+        )
+        pipeline.fit(X, y)
         return {
             "pipeline": pipeline,
-            "feature_columns": list(pipeline.feature_names_in_),
-            "best_model_name": metrics.get("best_model_name", "Retrained model"),
-            "feature_importance": metrics.get("feature_importance", []),
+            "feature_columns": get_feature_columns(df),
+            "best_model_name": "Logistic Regression",
+            "feature_importance": [],
         }
     except Exception as error:
         st.error(f"Could not rebuild the model automatically: {error}")
