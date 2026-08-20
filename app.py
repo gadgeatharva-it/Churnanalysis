@@ -643,11 +643,18 @@ def get_data(_data_version: float) -> pd.DataFrame:
 
 @st.cache_resource
 def load_model_artifact() -> dict[str, object] | None:
-    """Load the trained model artifact if available."""
-    if not MODEL_PATH.exists():
-        return None
-    with MODEL_PATH.open("rb") as file:
-        return pickle.load(file)
+    """Load the trained model artifact, rebuilding it if the pickle is stale."""
+    if MODEL_PATH.exists():
+        try:
+            with MODEL_PATH.open("rb") as file:
+                return pickle.load(file)
+        except Exception as error:
+            st.warning(
+                "The saved model could not be loaded in this runtime, so the app is rebuilding it from the dataset."
+            )
+            st.caption(f"Recovered from model loading error: {error}")
+
+    return retrain_model_artifact()
 
 
 @st.cache_data
